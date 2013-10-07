@@ -5,20 +5,100 @@ from django import forms
 from rapidsms.models import Contact, Connection
 from django.contrib.auth.models import Group
 from django.db.models import Q
-from rapidsms_httprouter.router import get_router, \
-    start_sending_mass_messages, stop_sending_mass_messages
 from rapidsms_httprouter.models import Message
 from rapidsms.messages.outgoing import OutgoingMessage
 from generic.forms import ActionForm, FilterForm
 from contact.models import MassText, Flag
 from django.contrib.sites.models import Site
 from rapidsms.contrib.locations.models import Location
-from uganda_common.forms import SMSInput
 from django.conf import settings
 import datetime
 from django.core.exceptions import FieldError
+from django.utils.safestring import mark_safe
 
 logger = logging.getLogger(__name__)
+
+
+
+class SMSInput(forms.Textarea):
+    """ A widget for sms input """
+
+    def __init__(self, *args, **kwargs):
+        super(SMSInput, self).__init__(*args, **kwargs)
+
+    def render(self, name, value, attrs=None):
+        javascript = """
+         <script type="text/javascript">
+            //<![CDATA[
+            function count_characters(name,counter_container,submit_btn)
+        {
+
+        var el="[name='"+name+"']"
+
+        var elem= $(el);
+
+        var value = elem.val();
+        var count = value.length;
+        //regex for stripping the spaces
+        var regex = new RegExp(/^\s*|\s*$/g);
+        var chars_left = 160 - count;
+        if (chars_left >= 0) {
+          if (elem.is('.overlimit')) {
+            elem.removeClass("overlimit");
+          }
+
+          if (chars_left > 1) {
+            str = (chars_left) + " characters left";
+          }
+          else if (chars_left > 0) {
+            str = "1 character left";
+          }
+          else {
+            str = "No characters left";
+          }
+        } else {
+          if (!elem.is('.overlimit')) {
+            elem.addClass("overlimit");
+          }
+
+          if (chars_left < -1) {
+            str = -chars_left + " characters over limit";
+          }
+          else {
+            str = "1 character over limit";
+          }
+        }
+        var ok = (count > 0 && count < 161) && (value.replace(regex,"") != elem._value);
+
+        $(submit_btn).disabled = !ok;
+        elem.next().html(str);
+        }
+        $(".smsinput").change(setInterval(function() {count_characters('%(name)s','.counter','foo');},500));
+
+             //]]>
+        </script>
+
+        """%{'name':name}
+        style = """
+        width: 18em;
+        height: 56px;
+        border: 1px solid #CCCCCC;
+        color: #222222;
+        font: 14px/18px "Helvetica Neue",Arial,sans-serif;
+        outline: medium none;
+        overflow-x: hidden;
+        overflow-y: auto;
+        padding: 2px;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+
+        """
+        attrs = {'style':style}
+        attrs['class'] = "smsinput"
+        return mark_safe(
+                "%s<div class='counter' ></div>" % super(SMSInput, self).render(name, value, attrs) + javascript)
+
+
 
 
 class FlaggedMessageForm(forms.ModelForm):
@@ -354,11 +434,9 @@ class ReplyTextForm(ActionForm):
         if request.user and request.user.has_perm('contact.can_message'):
             router = get_router()
             text = self.cleaned_data['text']
-            start_sending_mass_messages()
             for msg in results:
                 outgoing = OutgoingMessage(msg.connection, text)
                 router.handle_outgoing(outgoing, msg)
-            stop_sending_mass_messages()
             return ('%d messages sent successfully' % results.count(), 'success',)
         else:
             return ("You don't have permission to send messages!", 'error',)
